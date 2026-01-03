@@ -4,10 +4,14 @@ import * as jwt from 'jsonwebtoken';
 import { LoginDto } from './dto/login.dto';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
+import { AuthService } from 'src/auth/auth.service';
 
 @Controller('users')
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly authService: AuthService,
+  ) {}
 
   @Post('register')
   async register(
@@ -25,10 +29,9 @@ export class UsersController {
       throw new UnauthorizedException();
     }
 
-    const token: string = jwt.sign({ sub: user.id }, 'secret-key', {
-      expiresIn: '1h',
-    });
+    const accessToken = this.authService.createAccessToken(user);
+    console.log(accessToken);
 
-    return { accessToken: token };
+    return { accessToken };
   }
 }

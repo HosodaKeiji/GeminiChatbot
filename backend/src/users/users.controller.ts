@@ -1,5 +1,4 @@
 import { Body, Controller, Post, UnauthorizedException } from '@nestjs/common';
-import * as jwt from 'jsonwebtoken';
 
 import { LoginDto } from './dto/login.dto';
 import { UsersService } from './users.service';

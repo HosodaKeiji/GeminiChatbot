@@ -1,69 +1,189 @@
 import { useEffect, useRef, useState } from 'react';
+import { authFetch } from '../api';
 
 type Message = {
+  id: string;
   role: 'user' | 'assistant';
   content: string;
+  createdAt: string;
+};
+
+type Session = {
+  id: string;
+  title: string;
 };
 
 export default function Chat() {
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
-  const accessToken = localStorage.getItem('token');
 
-  const sendMessage = async () => {
-    if (!input.trim() || loading) return;
+  /* ===== セッション一覧取得 ===== */
+  const loadSessions = async () => {
+    const res = await authFetch('/chat/sessions');
+    const data: Session[] = await res.json();
 
-    setMessages((prev) => [...prev, { role: 'user', content: input }]);
-    setInput('');
-    setLoading(true);
-
-    const res = await fetch('http://localhost:3000/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}`, },
-      body: JSON.stringify({ message: input }),
-    });
-
-    const data = await res.json();
-
-    setMessages((prev) => [
-      ...prev,
-      { role: 'assistant', content: data.reply },
-    ]);
-    setLoading(false);
+    setSessions(data);
+    
+    if (!currentSessionId && data.length > 0) {
+      setCurrentSessionId(data[0].id);
+    }
   };
 
+  /* ===== メッセージ取得 ===== */
+  const loadMessages = async (sessionId: string) => {
+    const res = await authFetch(`/chat/messages?sessionId=${sessionId}`);
+    const data: Message[] = await res.json();
+    setMessages(data);
+  };
+
+  /* ===== 新規セッション作成 ===== */
+  const createSession = async () => {
+    const title = prompt('チャット名を入力してください');
+    if (!title) return;
+
+    const res = await authFetch('/chat/new-session', {
+      method: 'POST',
+      body: JSON.stringify({ title }),
+    });
+
+    const session: Session = await res.json();
+
+    setSessions((prev) => [session, ...prev]);
+    setCurrentSessionId(session.id);
+    setMessages([]);
+  };
+
+  /* ===== メッセージ送信 ===== */
+  const sendMessage = async () => {
+    if (!input.trim() || !currentSessionId) return;
+
+    await authFetch('/chat', {
+      method: 'POST',
+      body: JSON.stringify({
+        message: input,
+        sessionId: currentSessionId,
+      }),
+    });
+
+    setInput('');
+    await loadMessages(currentSessionId);
+  };
+
+  const renameSession = async (sessionId: string) => {
+    const title = prompt('新しいチャット名を入力してください');
+    if (!title) return;
+
+    await authFetch(`/chat/session/${sessionId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ title }),
+    });
+
+    // UI 即時反映
+    setSessions((prev) =>
+      prev.map((s) =>
+        s.id === sessionId ? { ...s, title } : s,
+      ),
+    );
+  };
+
+  const deleteSession = async (sessionId: string) => {
+    const ok = confirm('このチャットを削除しますか？');
+    if (!ok) return;
+
+    await authFetch(`/chat/session/${sessionId}`, {
+      method: 'DELETE',
+    });
+
+    setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+
+    if (currentSessionId === sessionId) {
+      setCurrentSessionId(null);
+      setMessages([]);
+    }
+  };  
+
+  /* ===== 初期ロード（API呼ぶだけ） ===== */
+  useEffect(() => {
+    loadSessions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* ===== セッション切替時 ===== */
+  useEffect(() => {
+    if (currentSessionId) {
+      loadMessages(currentSessionId);
+    }
+  }, [currentSessionId]);
+
+  /* ===== 自動スクロール ===== */
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, loading]);
+  }, [messages]);
 
   return (
-    // ★ 画面全体の中央寄せ用ラッパー
     <div style={styles.page}>
+      <aside style={styles.sidebar}>
+        <button style={styles.newChatButton} onClick={createSession}>
+          ＋ 新しいチャット
+        </button>
+
+        <div style={styles.sessionList}>
+          {sessions.map((s) => (
+            <div
+              key={s.id}
+              style={{
+                ...styles.sessionItem,
+                ...(s.id === currentSessionId
+                  ? styles.sessionItemActive
+                  : {}),
+              }}
+            >
+              <span
+                onClick={() => setCurrentSessionId(s.id)}
+                style={{ flex: 1, cursor: 'pointer' }}
+              >
+                {s.title}
+              </span>
+
+              <button
+                style={styles.sessionAction}
+                onClick={() => renameSession(s.id)}
+              >
+                ✏️
+              </button>
+
+              <button
+                style={styles.sessionAction}
+                onClick={() => deleteSession(s.id)}
+              >
+                🗑
+              </button>
+            </div>
+          ))}
+        </div>
+
+      </aside>
+
       <div style={styles.container}>
         <header style={styles.header}>Gemini Chat</header>
 
         <div style={styles.chatArea}>
-          {messages.map((msg, i) => (
+          {messages.map((m) => (
             <div
-              key={i}
+              key={m.id}
               style={{
                 ...styles.bubble,
-                ...(msg.role === 'user'
+                ...(m.role === 'user'
                   ? styles.userBubble
                   : styles.aiBubble),
               }}
             >
-              {msg.content}
+              {m.content}
             </div>
           ))}
-
-          {loading && (
-            <div style={{ ...styles.bubble, ...styles.aiBubble }}>
-              Typing...
-            </div>
-          )}
           <div ref={bottomRef} />
         </div>
 
@@ -71,7 +191,6 @@ export default function Chat() {
           <input
             style={styles.input}
             value={input}
-            placeholder="メッセージを入力..."
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
           />
@@ -85,18 +204,64 @@ export default function Chat() {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  // ★ これが無いと中央に来ない
+  /* ===== 画面全体 ===== */
   page: {
-    minHeight: '100vh',
+    display: 'flex',
+    height: '100vh',
     background: '#f5f5f5',
   },
 
-  // ★ 中央寄せの本体
+  /* ===== サイドバー ===== */
+  sidebar: {
+    width: 260,
+    background: '#1f2937',
+    color: '#fff',
+    display: 'flex',
+    flexDirection: 'column',
+  },
+
+  newChatButton: {
+    margin: 12,
+    padding: '10px 12px',
+    borderRadius: 8,
+    background: '#4f46e5',
+    color: '#fff',
+    border: 'none',
+    cursor: 'pointer',
+    fontWeight: 'bold',
+  },
+
+  sessionList: {
+    flex: 1,
+    overflowY: 'auto',
+  },
+
+  sessionItem: {
+    padding: '10px 12px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    cursor: 'pointer',
+    borderBottom: '1px solid rgba(255,255,255,0.1)',
+  },
+
+  sessionAction: {
+    background: 'transparent',
+    border: 'none',
+    color: '#fff',
+    cursor: 'pointer',
+    fontSize: 14,
+  },  
+
+  sessionItemActive: {
+    background: '#374151',
+  },
+
+  /* ===== チャット本体 ===== */
   container: {
+    flex: 1,
     maxWidth: 900,
-    width: '100%',
-    height: '100vh',
-    margin: '0 auto', // ← これが決定打
+    margin: '0 auto',
     display: 'flex',
     flexDirection: 'column',
     background: '#fff',
@@ -106,7 +271,9 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '12px 16px',
     borderBottom: '1px solid #ddd',
     fontWeight: 'bold',
+    background: '#fafafa',
   },
+
   chatArea: {
     flex: 1,
     padding: 16,
@@ -116,37 +283,49 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 12,
     background: '#fafafa',
   },
+
   bubble: {
     maxWidth: '70%',
     padding: '10px 14px',
     borderRadius: 16,
     boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+    lineHeight: 1.4,
+    wordBreak: 'break-word',
   },
+
   userBubble: {
     alignSelf: 'flex-end',
     background: '#DCF8C6',
   },
+
   aiBubble: {
     alignSelf: 'flex-start',
     background: '#fff',
   },
+
   footer: {
     display: 'flex',
     gap: 8,
     padding: 12,
     borderTop: '1px solid #ddd',
+    background: '#fff',
   },
+
   input: {
     flex: 1,
     padding: 10,
     borderRadius: 8,
     border: '1px solid #ccc',
+    outline: 'none',
   },
+
   button: {
     padding: '0 16px',
     borderRadius: 8,
     background: '#4f46e5',
     color: '#fff',
     border: 'none',
+    cursor: 'pointer',
+    fontWeight: 'bold',
   },
 };

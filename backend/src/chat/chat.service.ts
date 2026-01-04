@@ -4,7 +4,6 @@ import { Repository } from 'typeorm';
 import { ChatSession } from './entities/chat-session.entity';
 import { Message, MessageRole } from './entities/message.entity';
 import { User } from '../users/user.entity';
-import { UsersService } from 'src/users/users.service';
 
 @Injectable()
 export class ChatService {
@@ -14,43 +13,118 @@ export class ChatService {
     @InjectRepository(Message)
     private readonly messageRepo: Repository<Message>,
     @InjectRepository(User)
-    private readonly usersService: UsersService,
+    private readonly userRepo: Repository<User>,
   ) {}
 
-  async sendMessage(userId: string, content: string): Promise<string> {
-    // ① ユーザーの最新チャットセッションを取得（なければ作成）
-    let session = await this.sessionRepo.findOne({
-      where: { user: { id: userId } },
-      relations: ['messages', 'user'],
-      order: { createdAt: 'DESC' },
-    });
+  async sendMessage(
+    userId: string,
+    content: string,
+    sessionId?: string,
+  ): Promise<{ reply: string; sessionId: string }> {
+    let session: ChatSession | null = null;
 
-    if (!session) {
+    if (sessionId) {
+      session = await this.sessionRepo.findOne({
+        where: { id: sessionId, user: { id: userId } },
+        relations: ['user'],
+      });
+
+      if (!session) {
+        throw new Error('Session not found or access denied');
+      }
+    } else {
+      const user = await this.userRepo.findOne({ where: { id: userId } });
+      if (!user) throw new Error('User not found');
+
       session = this.sessionRepo.create({
-        user: { id: userId } as User,
+        user,
         title: 'New Chat',
       });
       await this.sessionRepo.save(session);
     }
 
-    // ② ユーザーのメッセージを保存
-    const userMessage = this.messageRepo.create({
-      session,
-      role: MessageRole.USER,
-      content,
+    // USER メッセージ
+    await this.messageRepo.save(
+      this.messageRepo.create({
+        session,
+        role: MessageRole.USER,
+        content,
+      }),
+    );
+
+    // AI メッセージ（仮）
+    const reply = content;
+    await this.messageRepo.save(
+      this.messageRepo.create({
+        session,
+        role: MessageRole.ASSISTANT,
+        content: reply,
+      }),
+    );
+
+    return {
+      reply,
+      sessionId: session.id,
+    };
+  }
+
+  async getSessions(userId: string): Promise<ChatSession[]> {
+    return this.sessionRepo.find({
+      where: { user: { id: userId } },
+      relations: ['messages'],
+      order: { createdAt: 'DESC' },
     });
-    await this.messageRepo.save(userMessage);
+  }
 
-    // ③ AI の返信を生成（今はダミー）
-    const aiReplyContent = `${content}`;
-
-    const aiMessage = this.messageRepo.create({
-      session,
-      role: MessageRole.ASSISTANT,
-      content: aiReplyContent,
+  async getMessages(sessionId: string, userId: string): Promise<Message[]> {
+    const session = await this.sessionRepo.findOne({
+      where: { id: sessionId, user: { id: userId } },
+      relations: ['messages'],
     });
-    await this.messageRepo.save(aiMessage);
 
-    return aiReplyContent;
+    if (!session) return [];
+    return session.messages.sort(
+      (a, b) => a.createdAt.getTime() - b.createdAt.getTime(),
+    );
+  }
+
+  async createSession(userId: string, title?: string): Promise<ChatSession> {
+    const user = await this.userRepo.findOne({ where: { id: userId } });
+    if (!user) throw new Error('User not found');
+
+    const session = this.sessionRepo.create({
+      user,
+      title: title ?? 'New Chat',
+    });
+    return this.sessionRepo.save(session);
+  }
+
+  async renameSession(
+    sessionId: string,
+    userId: string,
+    title: string,
+  ): Promise<ChatSession> {
+    const session = await this.sessionRepo.findOne({
+      where: { id: sessionId, user: { id: userId } },
+    });
+
+    if (!session) {
+      throw new Error('Session not found');
+    }
+
+    session.title = title;
+    return this.sessionRepo.save(session);
+  }
+
+  async deleteSession(sessionId: string, userId: string): Promise<void> {
+    const session = await this.sessionRepo.findOne({
+      where: { id: sessionId, user: { id: userId } },
+    });
+
+    if (!session) {
+      throw new Error('Session not found');
+    }
+
+    await this.sessionRepo.remove(session);
   }
 }

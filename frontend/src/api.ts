@@ -1,9 +1,9 @@
 const API_BASE = "http://localhost:3000";
 
-export const authFetch = (url: string, options: RequestInit = {}) => {
+export async function authFetch(url: string, options: RequestInit = {}) {
     const token = localStorage.getItem("token");
 
-    return fetch(`${API_BASE}${url}`, {
+    const response = await fetch(`${API_BASE}${url}`, {
         ...options,
         headers: {
             "Content-Type": "application/json",
@@ -11,8 +11,15 @@ export const authFetch = (url: string, options: RequestInit = {}) => {
             ...(options.headers || {}),
         },
     });
-};
 
+    if (response.status === 401) {
+        localStorage.removeItem("token");
+        window.location.href = "/login";
+        throw new Error("Unauthorized");
+    }
+
+    return response;
+}
 
 export const createSession = async (title: string) => {
     const res = await authFetch("/chat/new-session", {

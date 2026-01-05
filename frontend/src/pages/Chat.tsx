@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { authFetch } from '../api';
 
 type Message = {
@@ -13,12 +14,29 @@ type Session = {
   title: string;
 };
 
+type User = {
+  id: string;
+  email: string;
+};
+
 export default function Chat() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const [user, setUser] = useState<User | null>(null);
+  const navigate = useNavigate();
+
+  const loadUser = async () => {
+    const res = await authFetch('/users/me');
+    const data = await res.json();
+    setUser(data);
+  };
+
+  useEffect(() => {
+    loadUser();
+  }, []);  
 
   /* ===== セッション一覧取得 ===== */
   const loadSessions = async () => {
@@ -123,6 +141,13 @@ export default function Chat() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      navigate('/login');
+    }
+  }, [navigate]);
+
   return (
     <div style={styles.page}>
       <aside style={styles.sidebar}>
@@ -164,7 +189,21 @@ export default function Chat() {
             </div>
           ))}
         </div>
+        <div style={styles.userBox}>
+          <div style={styles.userEmail}>
+            {user?.email}
+          </div>
 
+          <button
+            style={styles.logoutButton}
+            onClick={() => {
+              localStorage.removeItem('token');
+              window.location.href = '/login';
+            }}
+          >
+            ログアウト
+          </button>
+        </div>
       </aside>
 
       <div style={styles.container}>
@@ -256,6 +295,28 @@ const styles: Record<string, React.CSSProperties> = {
   sessionItemActive: {
     background: '#374151',
   },
+
+  userBox: {
+    padding: 12,
+    borderTop: '1px solid rgba(255,255,255,0.1)',
+  },
+
+  userEmail: {
+    fontSize: 13,
+    marginBottom: 8,
+    opacity: 0.8,
+  },
+
+  logoutButton: {
+    width: '100%',
+    padding: '6px 0',
+    background: '#ef4444',
+    border: 'none',
+    borderRadius: 6,
+    color: '#fff',
+    cursor: 'pointer',
+    fontSize: 13,
+  },  
 
   /* ===== チャット本体 ===== */
   container: {
